@@ -10,10 +10,8 @@ import (
 )
 
 const (
-	dir = "/tmp/badger_test"
-	valueDir = "/tmp/badger_test"
-	//dir =  "/Users/felixxdu/test/tbadger_data"
-	//valueDir = "/Users/felixxdu/test/tbadger_data/data"
+	dir      = "./data"
+	valueDir = "./data"
 )
 
 func init() {
@@ -31,11 +29,6 @@ func randStringRunes(n int) string {
 }
 
 func main() {
-	BatchInsert()
-	scan10()
-}
-
-func insert1() {
 	opts := badger.DefaultOptions
 	opts.Dir = dir
 	opts.ValueDir = valueDir
@@ -45,43 +38,18 @@ func insert1() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = db.Update(func(txn *badger.Txn) error {
-		_  = txn.Set([]byte("key1"),[]byte("value1"));
-		_  = txn.Set([]byte("key2"),[]byte("value2"));
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-}
 
-func scan() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			k := item.Key()
-			v, err := item.Value()
-			if err != nil {
-				return err
-			}
-			fmt.Printf("key=%s, value=%s\n", k, v)
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
+	get(db, 123)
+	get(db, 124)
+	get(db, 8998)
+
+	BatchInsert(db)
+
+	get(db, 123)
+	get(db, 124)
+	get(db, 8998)
+	get(db,12345)
+
 	defer db.Close()
 }
 
@@ -119,35 +87,43 @@ func scan10() {
 	defer db.Close()
 }
 
-func BatchInsert() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	opts.TableBuilderOptions.BlockSize = 1024
-	opts.TableBuilderOptions.MaxTableSize = 8 << 20 * 4
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
+func BatchInsert(db * badger.DB) {
 
-	i := 1
+	i := 0
 
 	for {
-		err = db.Update(func(txn *badger.Txn) error {
+		err := db.Update(func(txn *badger.Txn) error {
 			key := fmt.Sprintf("%16d", i)
 			value := randStringRunes(64)
-			return txn.Set([]byte(key), []byte(value));
+			return txn.Set([]byte(key), []byte(value))
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
 		i += 1
-		if i > 10000000 {
+		if i > 400000 {
 			break
 		}
 		if i % 10000 == 0{
 			log.Printf("%d keys already inserted\n", i)
 		}
 	}
-	defer db.Close()
+}
+
+func get(db *badger.DB, key int) {
+	err := db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(fmt.Sprintf("%16d", key)))
+		if err != nil {
+			return err
+		}
+		val, err := item.Value()
+		if err != nil {
+			return err
+		}
+		log.Printf("key: %d, value %s\n", key, val)
+		return nil
+	})
+	if err != nil {
+		log.Printf("key: %d, err: %s", key, err.Error())
+	}
 }
