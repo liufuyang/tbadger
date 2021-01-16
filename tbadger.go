@@ -2,8 +2,8 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"time"
 
@@ -11,117 +11,16 @@ import (
 )
 
 const (
-	dir = "/Users/felixxdu/pingcap/hackathon_2020/data/20m_8bk_64bv"
-	valueDir = "/Users/felixxdu/pingcap/hackathon_2020/data/20m_8bk_64bv"
-	//dir =  "/Users/felixxdu/test/tbadger_data"
-	//valueDir = "/Users/felixxdu/test/tbadger_data/data"
+	dir              = "./data"
+	valueDir         = "./data"
+	MAX_VALUE int32 = 1000000
 )
 
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-func randStringRunes(n int) string {
-	b := make([]rune, n)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
-}
-
 func main() {
-	seqGet()
-	//scan10()
-	//getT()
-}
-
-func insert1() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	opts.TableBuilderOptions.BlockSize = 1024
-	opts.TableBuilderOptions.MaxTableSize = 8 << 20 * 4
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = db.Update(func(txn *badger.Txn) error {
-		_  = txn.Set([]byte("key1"),[]byte("value1"));
-		_  = txn.Set([]byte("key2"),[]byte("value2"));
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-}
-
-func scan() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			k := item.Key()
-			v, err := item.Value()
-			if err != nil {
-				return err
-			}
-			fmt.Printf("key=%s, value=%s\n", k, v)
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-}
-
-func scan10() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	i := 0
-	err = db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			k := item.Key()
-			v, err := item.Value()
-			if err != nil {
-				return err
-			}
-			fmt.Printf("|key=%s|value=%s|\n", k, v)
-			i += 1
-			if i > 10 {
-				break
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-}
-
-func BatchInsert() {
 	opts := badger.DefaultOptions
 	opts.Dir = dir
 	opts.ValueDir = valueDir
@@ -133,156 +32,65 @@ func BatchInsert() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	defer db.Close()
 
-	i := 1
+	BatchInsert(db)
+
+	for n := 0; n < 1000; n++ {
+		get(db, uint32(n))
+	}
+}
+
+func BatchInsert(db *badger.DB) {
+	var i uint32 = 1
 
 	for {
-		err = db.Update(func(txn *badger.Txn) error {
-			key := fmt.Sprintf("%16d", i)
-			value := randStringRunes(64)
-			fmt.Printf("%s|%s\n", key, value)
-			return txn.Set([]byte(key), []byte(value));
+		err := db.Update(func(txn *badger.Txn) error {
+			n := uint32(rand.Int31n(MAX_VALUE))               // n is in range [0, MAX_VALUE];
+			nExp1p1 := uint32(math.Pow(float64(n), 1.2)) // n is in range [0, MAX_VALUE^1.1]; 1_000_000^1.2 = 15_848_931
+			key := make([]byte, 4)
+			value := make([]byte, 4)
+			binary.BigEndian.PutUint32(key, nExp1p1) // making key not continues, [0, 15_848_931]
+			binary.BigEndian.PutUint32(value, n)
+
+			// fmt.Printf("%d|%d\n", nExp1p1, n)
+			return txn.Set(key, value)
 		})
 		if err != nil {
 			log.Fatal(err)
 		}
 		i += 1
-		if i > 20000000 {
+		if i > 1000000 {
 			break
 		}
-		if i % 10000 == 0{
+		if i%10000 == 0 {
 			log.Printf("%d keys already inserted\n", i)
 		}
 	}
-	defer db.Close()
+
 }
 
-func getT() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-	err = db.View(func(txn *badger.Txn) error {
-		/*
-		item, err := txn.Get([]byte("11"))
+func get(db *badger.DB, key uint32) bool {
+	found := false
+	var _ []byte
+	err := db.View(func(txn *badger.Txn) error {
+		bs := make([]byte, 4)
+		binary.BigEndian.PutUint32(bs, key)
+		item, err := txn.Get(bs)
 		if err != nil {
 			return err
 		}
-		val, err := item.Value()
+		_, err = item.Value()
 		if err != nil {
-			return err
+			return nil
 		}
-		fmt.Printf("11  =: %s\n", val)
-
-		 */
-
-		item, err := txn.Get([]byte(fmt.Sprintf("%16d", 919)))
-		if err != nil {
-			return err
-		}
-		val, err := item.Value()
-		if err != nil {
-			return err
-		}
-		fmt.Printf("919  =: %s\n", val)
-		/*
-
-		item, err = txn.Get([]byte("9"))
-		if err != nil {
-			return err
-		}
-		val, err = item.Value()
-		if err != nil {
-			return err
-		}
-		fmt.Printf("9  =: %s\n", val)
-
-		 */
+		found = true
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("FATAL: %s", err)
+		// log.Printf("NotFound. key: %d, err: %s", key, err.Error())
+	} else {
+		// log.Printf("Got key: %d, value %d\n", key, binary.BigEndian.Uint32(value))
 	}
+	return found
 }
-
-func seqGet() {
-	opts := badger.DefaultOptions
-	opts.Dir = dir
-	opts.ValueDir = valueDir
-	db, err := badger.Open(opts)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer db.Close()
-	start := time.Now()
-	defer func() {
-		end := time.Now()
-		log.Printf("COST %d\n", end.Sub(start).Microseconds())
-	}()
-
-	// f, err := os. Create("cpu.prof")
-	// pprof.StartCPUProfile(f)
-	// defer pprof.StopCPUProfile()
-	j := 1
-	b := make([]byte, 8)
-	for {
-		var i uint64 = 1
-		for {
-			err = db.View(func(txn *badger.Txn) error {
-				/*
-					item, err := txn.Get([]byte("11"))
-					if err != nil {
-						return err
-					}
-					val, err := item.Value()
-					if err != nil {
-						return err
-					}
-					fmt.Printf("11  =: %s\n", val)
-
-				*/
-				binary.BigEndian.PutUint64(b, i)
-
-				_, err := txn.Get(b)
-				if err != nil {
-					return err
-				}
-				//, err = item.Value()
-				// if err != nil {
-				// 	return err
-				// }
-				//fmt.Printf("919  =: %s\n", val)
-				/*
-
-					item, err = txn.Get([]byte("9"))
-					if err != nil {
-						return err
-					}
-					val, err = item.Value()
-					if err != nil {
-						return err
-					}
-					fmt.Printf("9  =: %s\n", val)
-
-				*/
-				return nil
-			})
-			if err != nil {
-				log.Fatalf("FATAL: %s", err)
-			}
-			i += 1
-			if i > 20000000 {
-				break
-			}
-		}
-		j += 1
-		if j > 5 {
-			break
-		}
-	}
-}
-
