@@ -17,6 +17,7 @@ var (
 )
 
 func init() {
+	rand.Seed(42)
 	opts := badger.DefaultOptions
 	opts.Dir = dir
 	opts.ValueDir = valueDir
