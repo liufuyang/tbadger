@@ -14,6 +14,7 @@ import (
 var (
 	db  *badger.DB
 	err error
+	keys []uint32
 )
 
 func init() {
@@ -32,13 +33,19 @@ func init() {
 	for n := 0; n < 20; n++ {
 		get(db, uint32(n))
 	}
+
+	keys = make([]uint32, 80000000)
+	for n := 0; n < 20; n++ {
+		x := uint32(rand.Int31n(MAX_VALUE))
+		key := uint32(math.Pow(float64(x), 1.2))
+		keys = append(keys, key)
+	}
 }
 
 func BenchmarkBadger(b *testing.B) {
 	nFound := 0
-	maxValPow1P2 := uint32(math.Pow(float64(MAX_VALUE), 1.2))
 	for n := 0; n < b.N; n++ {
-		key := rand.Uint32() % maxValPow1P2
+		key := keys[n]
 		found := get(db, key)
 		if found {
 			nFound++
